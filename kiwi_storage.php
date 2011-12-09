@@ -1,5 +1,6 @@
 <?php
 
+// this interface defines the allowed storage operations
 interface storage {
 
 	// test if the $ver version of $key exists; returns true if it exists, false otherwise
@@ -107,34 +108,132 @@ class cached_file_storage extends file_storage {
 	}
 	
 	public function has($key, $ver) {
-		$cache_key = cache_key('has', $key, $ver);
-		if (!key_exists($cache, $cache_key))
-			$cache[$cache_key] = parent::has($key, $ver);
-		return $cache[$cache_key];
+		$cache_key = $this->cache_key('has', $key, $ver);
+		if (!key_exists($this->cache, $cache_key))
+			$this->cache[$cache_key] = parent::has($key, $ver);
+		return $this->cache[$cache_key];
 	}
 
 	public function get($key, $ver) {
-		$cache_key = cache_key('get', $key, $ver);
-		if (!key_exists($cache, $cache_key))
-			$cache[$cache_key] = parent::get($key, $ver);
-		return $cache[$cache_key];
+		$cache_key = $this->cache_key('get', $key, $ver);
+		if (!key_exists($this->cache, $cache_key))
+			$this->cache[$cache_key] = parent::get($key, $ver);
+		return $this->cache[$cache_key];
 	}
 
 	public function put($key, $value) {
-		$cache_key = cache_key('get', $key);
-		$cache[$cache_key] = $value;
+		$cache_key = $this->cache_key('get', $key);
+		$this->cache[$cache_key] = $value;
 		$ver = parent::put($key, $value);
-		$cache_key = cache_key('get', $key, $ver);
-		$cache[$cache_key] = $value;
+		$cache_key = $this->cache_key('get', $key, $ver);
+		$this->cache[$cache_key] = $value;
 	}
 
 	public function time($key, $ver) {
-		$cache_key = cache_key('time', $key, $ver);
-		if (!key_exists($cache, $cache_key))
-			$cache[$cache_key] = parent::time($key, $ver);
-		return $cache[$cache_key];
+		$cache_key = $this->cache_key('time', $key, $ver);
+		if (!key_exists($this->cache, $cache_key))
+			$this->cache[$cache_key] = parent::time($key, $ver);
+		return $this->cache[$cache_key];
 	}
 	
+}
+
+class sqlite_storage implements storage {
+
+	private $db;
+	private $q_has_any;
+	private $q_has;
+	private $q_get_latest;
+	private $q_get;
+	private $q_time_latest;
+	private $q_time;
+
+	public function has($key, $ver) {
+		if (!is_integer($ver) || $ver < 0)
+			$ver = false;
+		if ($ver === false) {
+			$this->q_has_any->bindValue(':key', $key, SQLITE3_STRING);
+			$r = $this->q_has_any->execute();
+		} else {
+			$this->q_has->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_has->bindValue(':ver', $ver, SQLITE3_INTEGER);
+			$r = $this->q_has->execute();
+		}		
+		$count = $r->fetchArray(SQLITE3_NUM);
+		return intval($count[0]) > 0;
+	}
+
+	public function get($key, $ver) {
+		if (!is_integer($ver) || $ver < 0)
+			$ver = false;
+		if ($ver === false) {
+			$this->q_get_latest->bindValue(':key', $key, SQLITE3_STRING);
+			$r = $this->q_get_latest->execute();
+		} else {
+			$this->q_get->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_get->bindValue(':ver', $ver, SQLITE3_INTEGER);
+			$r = $this->q_get->execute();
+		}		
+		$count = $r->fetchArray(SQLITE3_NUM);
+		return $count ? $r[0] : false;
+	}
+
+	public function put($key, $value) {
+		$q_put = $this->db->prepare('INSERT INTO data(key, version, value) VALUES (:key, (SELECT MAX(version)+1 FROM data WHERE key=:key), :value)');
+		$q_put->bindValue(':key', $key, SQLITE3_STRING);
+		$q_put->bindValue(':value', $value, SQLITE3_STRING);
+		$q_put->execute();
+		$q_latest = $this->db->prepare('SELECT MAX(version) FROM data WHERE key=:key');
+		$q_latest->bindValue(':key', $key, SQLITE3_STRING);
+		$r = $q_latest->execute();
+	}
+
+	public function rem($key) {
+		$q_rem = $this->db->prepare('DELETE FROM data WHERE key=:key');
+		$q_rem->bindValue(':key', $key, SQLITE3_STRING);
+		return $q_rem->execute();
+	}
+
+	public function list() {
+		$r = $this->db->query('SELECT DISTINCT(key) FROM data');
+		$keys = array();
+		while ($key = $r->fetchArray(SQLITE3_NUM))
+			$keys[] = $key[0];
+		return $keys;
+	}
+
+	public function time($key, $ver) {
+		if (!is_integer($ver) || $ver < 0)
+			$ver = false;
+		if ($ver === false) {
+			$this->q_time_latest->bindValue(':key', $key, SQLITE3_STRING);
+			$r = $this->q_time_latest->execute();
+		} else {
+			$this->q_time->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_time->bindValue(':ver', $ver, SQLITE3_INTEGER);
+			$r = $this->q_time->execute();
+		}		
+		$time = $r->fetchArray(SQLITE3_NUM);
+		return $time ? $r[0] : false;
+	}
+
+	public function __construct($db_file) {
+		$this->db = new sqlite3($db_file);
+		$this->exec('CREATE TABLE IF NOT EXISTS data (
+			key TEXT NOT NULL, 
+			version INTEGER NOT NULL, 
+			value TEXT NOT NULL, 
+			time INTEGER NOT NULL DEFAULT CURRENT_TIMESTAMP
+			PRIMARY KEY(key, version)
+		)');
+		$this->q_has_any = $this->db->prepare('SELECT COUNT(*) FROM data WHERE key=:key');
+		$this->q_has = $this->db->prepare('SELECT COUNT(*) FROM data WHERE key=:key AND version=:ver');
+		$this->q_get_latest = $this->db->prepare('SELECT value FROM data WHERE key=:key ORDER BY version DESC LIMIT 1');
+		$this->q_get = $this->db->prepare('SELECT value FROM data WHERE key=:key AND version=:ver LIMIT 1');
+		$this->q_time_latest = $this->db->prepare('SELECT time FROM data WHERE key=:key ORDER BY version DESC LIMIT 1');
+		$this->q_time = $this->db->prepare('SELECT time FROM data WHERE key=:key AND version=:ver LIMIT 1');
+	}
+
 }
 
 ?>
