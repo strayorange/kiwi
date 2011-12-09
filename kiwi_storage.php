@@ -152,10 +152,10 @@ class sqlite_storage implements storage {
 		if (!is_integer($ver) || $ver < 0)
 			$ver = false;
 		if ($ver === false) {
-			$this->q_has_any->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_has_any->bindValue(':key', $key, SQLITE3_TEXT);
 			$r = $this->q_has_any->execute();
 		} else {
-			$this->q_has->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_has->bindValue(':key', $key, SQLITE3_TEXT);
 			$this->q_has->bindValue(':ver', $ver, SQLITE3_INTEGER);
 			$r = $this->q_has->execute();
 		}		
@@ -167,10 +167,10 @@ class sqlite_storage implements storage {
 		if (!is_integer($ver) || $ver < 0)
 			$ver = false;
 		if ($ver === false) {
-			$this->q_get_latest->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_get_latest->bindValue(':key', $key, SQLITE3_TEXT);
 			$r = $this->q_get_latest->execute();
 		} else {
-			$this->q_get->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_get->bindValue(':key', $key, SQLITE3_TEXT);
 			$this->q_get->bindValue(':ver', $ver, SQLITE3_INTEGER);
 			$r = $this->q_get->execute();
 		}		
@@ -180,17 +180,19 @@ class sqlite_storage implements storage {
 
 	public function put($key, $value) {
 		$q_put = $this->db->prepare('INSERT INTO data(key, version, value) VALUES (:key, (SELECT MAX(version)+1 FROM data WHERE key=:key), :value)');
-		$q_put->bindValue(':key', $key, SQLITE3_STRING);
-		$q_put->bindValue(':value', $value, SQLITE3_STRING);
+		$q_put->bindValue(':key', $key, SQLITE3_TEXT);
+		$q_put->bindValue(':value', $value, SQLITE3_TEXT);
 		$q_put->execute();
 		$q_latest = $this->db->prepare('SELECT MAX(version) FROM data WHERE key=:key');
-		$q_latest->bindValue(':key', $key, SQLITE3_STRING);
+		$q_latest->bindValue(':key', $key, SQLITE3_TEXT);
 		$r = $q_latest->execute();
+		$ver = $r->fetchArray(SQLITE3_NUM);
+		return $ver ? $ver[0] : false;
 	}
 
 	public function rem($key) {
 		$q_rem = $this->db->prepare('DELETE FROM data WHERE key=:key');
-		$q_rem->bindValue(':key', $key, SQLITE3_STRING);
+		$q_rem->bindValue(':key', $key, SQLITE3_TEXT);
 		return $q_rem->execute();
 	}
 
@@ -206,10 +208,10 @@ class sqlite_storage implements storage {
 		if (!is_integer($ver) || $ver < 0)
 			$ver = false;
 		if ($ver === false) {
-			$this->q_time_latest->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_time_latest->bindValue(':key', $key, SQLITE3_TEXT);
 			$r = $this->q_time_latest->execute();
 		} else {
-			$this->q_time->bindValue(':key', $key, SQLITE3_STRING);
+			$this->q_time->bindValue(':key', $key, SQLITE3_TEXT);
 			$this->q_time->bindValue(':ver', $ver, SQLITE3_INTEGER);
 			$r = $this->q_time->execute();
 		}		
@@ -219,7 +221,7 @@ class sqlite_storage implements storage {
 
 	public function __construct($db_file) {
 		$this->db = new sqlite3($db_file);
-		$this->exec('CREATE TABLE IF NOT EXISTS data (
+		$this->db->exec('CREATE TABLE IF NOT EXISTS data (
 			key TEXT NOT NULL, 
 			version INTEGER NOT NULL, 
 			value TEXT NOT NULL, 
