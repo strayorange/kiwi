@@ -1,6 +1,7 @@
 <?php
 
 interface storage {
+
 	// test if the $ver version of $key exists; returns true if it exists, false otherwise
 	// if $ver is omitted, check if it exists at least a version
 	public function has($key, $ver=false);
@@ -22,9 +23,11 @@ interface storage {
 	// get the creation timestamp of the $ver version of $key; returns the timestamp if it exists; false otherwise
 	// if $ver is omitted, return the timestamp of the latest version
 	public function time($key, $ver=false); 
+
 }
 
 class file_storage implements storage {
+
 	private $dir;
 
 	private function checkdir() {
@@ -90,6 +93,48 @@ class file_storage implements storage {
 		$this->dir = realpath($dir);
 		$this->checkdir();
 	}
+
+}
+
+class cached_file_storage extends file_storage {
+
+	private $cache = array();
+
+	private function cache_key($entry_type, $key, $ver) {
+		if (!is_integer($ver) || $ver < 0)
+			return "$entry_type.$key";
+		return "$entry_type.$key.$ver";
+	}
+	
+	public function has($key, $ver) {
+		$cache_key = cache_key('has', $key, $ver);
+		if (!key_exists($cache, $cache_key))
+			$cache[$cache_key] = parent::has($key, $ver);
+		return $cache[$cache_key];
+	}
+
+	public function get($key, $ver) {
+		$cache_key = cache_key('get', $key, $ver);
+		if (!key_exists($cache, $cache_key))
+			$cache[$cache_key] = parent::get($key, $ver);
+		return $cache[$cache_key];
+	}
+
+	public function put($key, $value) {
+		$cache_key = cache_key('get', $key);
+		$cache[$cache_key] = $value;
+		$ver = parent::put($key, $value);
+		$cache_key = cache_key('get', $key, $ver);
+		$cache[$cache_key] = $value;
+	}
+
+	public function time($key, $ver) {
+		$cache_key = cache_key('time', $key, $ver);
+		if (!key_exists($cache, $cache_key))
+			$cache[$cache_key] = parent::time($key, $ver);
+		return $cache[$cache_key];
+	}
+	
 }
 
 ?>
